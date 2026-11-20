@@ -1,0 +1,49 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.drmeph/freemobile-conso-mcp",
+  "title": "Free Mobile Usage",
+  "description": "Free Mobile (France) account usage: data, roaming, calls, SMS, overage, carbon footprint.",
+  "repository": {
+    "url": "https://github.com/drmeph/freemobile-conso-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/drmeph/freemobile-conso-mcp",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "freemobile-conso-mcp",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FREEMOBILE_USERNAME",
+          "description": "Free Mobile subscriber identifiant (8 digits, as used on mobile.free.fr/account)",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "FREEMOBILE_PASSWORD",
+          "description": "Free Mobile account password",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "FREEMOBILE_CACHE_TTL",
+          "description": "Seconds to cache a dashboard scrape between tool calls (default 300)",
+          "isRequired": false,
+          "default": "300"
+        },
+        {
+          "name": "FREEMOBILE_STATE_FILE",
+          "description": "Where the login session and trusted-device cookies are kept (default ~/.local/state/freemobile-conso-mcp/session.json)",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

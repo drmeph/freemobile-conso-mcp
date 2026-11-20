@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "freemobile-conso-mcp"
+version = "0.1.0"
+description = "MCP server exposing Free Mobile (France) account usage (data, roaming, calls, SMS, overage, carbon footprint) as tools for AI agents."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "drmeph" }]
+keywords = ["mcp", "model-context-protocol", "free-mobile", "freemobile", "roaming", "telecom", "france"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Communications :: Telephony",
+  "Natural Language :: French",
+]
+dependencies = [
+  "mcp>=2.0,<3",
+  "requests>=2.28",
+  "beautifulsoup4>=4.11",
+  "anyio>=4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "jsonschema>=4"]
+
+[project.scripts]
+freemobile-conso-mcp = "freemobile_conso_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/drmeph/freemobile-conso-mcp"
+Issues = "https://github.com/drmeph/freemobile-conso-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/freemobile_conso_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
