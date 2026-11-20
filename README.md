@@ -6,7 +6,7 @@ An [MCP](https://modelcontextprotocol.io) server that lets AI agents (Claude Des
 
 It's built for people living abroad on a Free plan with a roaming allowance (for example 35 GB abroad / 200+ GB in France) who want to ask *"how much roaming data do I have left?"* without logging into mobile.free.fr.
 
-> Unofficial. Not affiliated with Free / Iliad. It scrapes your own subscriber dashboard with your own credentials, using the open-source [FreeMobileConso](https://github.com/CorentinMre/FreeMobileConso) library (MIT, by CorentinMre).
+> Unofficial. Not affiliated with Free / Iliad. It reads your own subscriber area (mobile.free.fr/account/v2) with your own credentials. Earlier versions used the [FreeMobileConso](https://github.com/CorentinMre/FreeMobileConso) library (MIT, by CorentinMre), which only supports the dashboard Free retired in 2026.
 
 ## Tools
 
@@ -22,7 +22,9 @@ All tools are read-only.
 | `get_usage_summary` | A single call covering France and roaming data, total overage and renewal date. |
 | `health_check` | Logs in fresh and checks that the dashboard still parses. See [Health check](#health-check). |
 
-Every number comes with the raw string from the dashboard (`"used": "12.5Go"`, `"used_gb": 12.5`), so you can always check what the server parsed. Results are cached for 5 minutes, so a burst of tool calls only logs in once. Pass `refresh: true` to force a new login.
+Every number comes with the raw string from the site (`"used": "12,5 Go"`, `"used_gb": 12.5`), so you can always check what the server parsed. Results are cached for 5 minutes, so a burst of tool calls fetches the pages once. Pass `refresh: true` to fetch them again. The login session is kept between runs, so most fetches don't log in at all.
+
+Abroad, Free reports call time by direction rather than destination, so `get_roaming_usage` adds `outgoing`/`incoming` (and `_seconds`) to `calls`; `used` is their sum.
 
 Example output from `get_roaming_usage` with `metric: "data"`:
 
@@ -30,15 +32,15 @@ Example output from `get_roaming_usage` with `metric: "data"`:
 {
   "scope": "roaming",
   "data": {
-    "used": "12.5Go", "used_gb": 12.5,
-    "allowance": "35Go", "allowance_gb": 35.0,
-    "remaining": "22.5Go", "remaining_gb": 22.5,
+    "used": "12,5 Go", "used_gb": 12.5,
+    "allowance": "35 Go", "allowance_gb": 35.0,
+    "remaining": "22,5 Go", "remaining_gb": 22.5,
     "percent_used": 35.7,
-    "overage": "0.00€", "overage_eur": 0.0
+    "overage": "0,00€", "overage_eur": 0.0
   },
   "billing_period": {
-    "raw": "Suivi conso du 05/11/2026 au 04/12/2026",
-    "start": "2026-11-05", "end": "2026-12-04", "next_renewal": "2026-12-05"
+    "raw": "Période du 05/11 au 05/12. Votre forfait sera remis à zéro le 5 décembre 2026",
+    "start": "2026-11-05", "end": "2026-12-05", "next_renewal": "2026-12-05"
   },
   "fetched_seconds_ago": 0
 }
@@ -65,9 +67,20 @@ pip install freemobile-conso-mcp
 | `FREEMOBILE_USERNAME` | yes | Your Free Mobile *identifiant*: the 8-digit number you use at mobile.free.fr/account |
 | `FREEMOBILE_PASSWORD` | yes | Your account password |
 | `FREEMOBILE_CACHE_TTL` | no | How many seconds to cache a scrape (default `300`) |
-| `FREEMOBILE_DUMP_HTML` | no | A file path. When parsing fails, the raw dashboard HTML is written there so the selectors can be fixed. **The file contains your personal data.** |
+| `FREEMOBILE_STATE_FILE` | no | Where the login session and Free's trusted-device cookie are kept (default `~/.local/state/freemobile-conso-mcp/session.json`, created with mode 0600). **Anyone who can read this file can open your subscriber area until the session expires.** |
+| `FREEMOBILE_DUMP_HTML` | no | A file path. When parsing fails, the raw page HTML is written there so the parser can be fixed. **The file contains your personal data.** |
 
 Credentials are only sent to `mobile.free.fr` and are never logged.
+
+### One-time security code (2FA)
+
+Free asks for a code sent by SMS (or e-mail) when you log in from a new device. Run this once in a terminal, with the same environment variables as the server:
+
+```bash
+FREEMOBILE_USERNAME=12345678 FREEMOBILE_PASSWORD='your-password' uvx freemobile-conso-mcp --login
+```
+
+Type the code when asked. The device is then remembered ("Se souvenir de cet appareil", about six months), and the server logs in without a code. If Free asks again later, the tools fail with `[otp_required]`. The server won't log in again by itself until you've run `--login`, so it never sends you a stream of codes. A code is reused if you rerun `--login` within 10 minutes; after that, Free sends a new one.
 
 ## Claude Desktop setup
 
@@ -107,14 +120,15 @@ claude mcp add freemobile \
 
 ## Health check
 
-FreeMobileConso was written in 2021 against the dashboard HTML of the time. If Free redesigns the dashboard, the selectors break. The server is built to tell you when that happens instead of returning wrong numbers:
+The server scrapes Free's web pages, so a redesign can break it. It's built to tell you when that happens instead of returning wrong numbers:
 
-- `health_check` (the tool) and `freemobile-conso-mcp --check` (the CLI) log in, parse the dashboard and inspect a set of canary fields: account name, billing period, and local/roaming data used and allowance.
+- `health_check` (the tool) and `freemobile-conso-mcp --check` (the CLI) fetch the pages afresh, parse them and inspect a set of canary fields: account name, billing period, and local/roaming data used and allowance.
 - The `status` field is one of:
   - `ok`
   - `degraded`: parsed, but some canary fields are empty or no longer look like `12.3Go`
-  - `layout_changed`: logged in, but the parser crashed
-  - `auth_failed`: the login page came back
+  - `layout_changed`: logged in, but the usage data isn't where the parser expects it
+  - `auth_failed`: Free rejected the identifiant/password or the security code
+  - `otp_required`: Free wants a one-time code; run `freemobile-conso-mcp --login`
   - `network_error`
   - `not_configured`
 - The usage tools add a `warnings` field when the fields they rely on come back empty.
@@ -125,15 +139,13 @@ FreeMobileConso was written in 2021 against the dashboard HTML of the time. If F
 0 8 * * * FREEMOBILE_USERNAME=... FREEMOBILE_PASSWORD=... freemobile-conso-mcp --check >/dev/null || notify-send "Free Mobile MCP broken"
 ```
 
-**`auth_failed` with correct credentials** usually means Free asked for an extra verification step on this login, such as an SMS or e-mail code or a captcha. FreeMobileConso can't complete that step. Log in once from a browser, then try again.
+**`otp_required`** isn't a breakage: Free wants a one-time code for this login. See [One-time security code](#one-time-security-code-2fa).
 
 ## Known limitations
 
-- The data comes from scraping HTML, so it's only as reliable as the FreeMobileConso selectors. Run the health check.
-- The plan name isn't parsed by FreeMobileConso. The server looks for it heuristically, and it may come back `null`.
-- The dashboard only reports a carbon footprint for data used in France.
-- FreeMobileConso adds up the out-of-plan amounts with `float()`. If Free starts showing amounts with French decimal commas (`1,50€`), the library raises an error, which shows up as `layout_changed`. This server's own parsers accept both `1.50` and `1,50`.
-- FreeMobileConso uses BeautifulSoup's `findAll`, which is deprecated. A future major version of `beautifulsoup4` could break it.
+- The data comes from scraping the v2 pages (`/consommation-mobile` and the home page): usage figures from the page's embedded React Server Components data, the rest from the HTML. It's only as reliable as that structure. Run the health check.
+- The site shows a single carbon footprint figure; it's reported under France usage, as before.
+- Free shows the billing period without a year ("du 18/11 au 18/12"); the year is taken from the reset date it shows next to it.
 - Only one line is supported per server instance. To track several lines, run one instance per line.
 
 ## Development
@@ -144,7 +156,9 @@ pip install -e '.[dev]'
 pytest
 ```
 
-The tests run offline. The real FreeMobileConso parser runs against saved HTML fixtures in `tests/fixtures/`, which cover a working dashboard, the login page and a redesigned page. If Free changes its markup, save a sanitized copy of the new page with `FREEMOBILE_DUMP_HTML` and add it as a fixture.
+The tests run offline against a fake mobile.free.fr (login, one-time code, session expiry) that serves the fixtures in `tests/fixtures/`. Those are redacted, trimmed copies of real v2 pages: Free's markup and RSC data for the parts the parser reads, with fake identity and usage values.
+
+To refresh them after a site change, save the pages with `scripts/probe_v2_login.py` (writes to `probe_out/`, which is gitignored and contains personal data), then run `python scripts/make_v2_fixtures.py`. It refuses to write a fixture if anything that looks personal (name, identifiant, phone numbers, e-mails, call log, invoices) is left.
 
 ## Publishing to the MCP Registry
 
@@ -164,4 +178,4 @@ The metadata for the [official MCP Registry](https://registry.modelcontextprotoc
 
 ## License
 
-MIT. FreeMobileConso is © CorentinMre, MIT.
+MIT. Earlier versions built on FreeMobileConso, © CorentinMre, MIT.

@@ -1,7 +1,8 @@
 """MCP server: Free Mobile account usage as tools.
 
 Run with ``freemobile-conso-mcp`` (stdio transport). Credentials come from the
-FREEMOBILE_USERNAME / FREEMOBILE_PASSWORD environment variables.
+FREEMOBILE_USERNAME / FREEMOBILE_PASSWORD environment variables. If Free asks
+for a one-time code, run ``freemobile-conso-mcp --login`` once in a terminal.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ log = logging.getLogger("freemobile_conso_mcp")
 
 INSTRUCTIONS = """\
 Read-only access to a Free Mobile (France) account's current-cycle usage, \
-scraped from the subscriber dashboard at mobile.free.fr.
+scraped from the subscriber area at mobile.free.fr.
 
 - "local" means usage on the French network; "roaming" means usage abroad \
 (EU/roaming destinations, counted against the plan's roaming allowance).
@@ -33,6 +34,9 @@ scraped from the subscriber dashboard at mobile.free.fr.
 explicitly needs the very latest figures (each refresh is a fresh login).
 - If a tool errors or returns warnings, call health_check to find out whether \
 it is a credentials problem or a dashboard layout change.
+- An [otp_required] error means Free wants a one-time security code: ask the \
+user to run `freemobile-conso-mcp --login` in a terminal and enter the code \
+they receive. Retrying the tool will not help until they have.
 """
 
 mcp = MCPServer(
@@ -134,8 +138,9 @@ async def health_check() -> dict[str, Any]:
 
     status is one of: ok, degraded (parsed, but known fields came back empty
     or malformed: the dashboard probably changed), layout_changed, auth_failed,
-    network_error, not_configured. Never raises; use it to diagnose other
-    tools' errors.
+    otp_required (Free wants a one-time code: the user must run
+    `freemobile-conso-mcp --login`), network_error, not_configured. Never
+    raises; use it to diagnose other tools' errors.
     """
     return await anyio.to_thread.run_sync(lambda: run_health_check(account()))
 
@@ -174,13 +179,29 @@ def run_health_check(acct: FreeMobileAccount) -> dict[str, Any]:
     }
 
 
-def _library_version() -> str | None:
-    try:
-        from importlib.metadata import version
+def _library_version() -> str:
+    # Formerly the FreeMobileConso version; the scraper is now built in.
+    return "built-in (mobile.free.fr/account/v2)"
 
-        return version("FreeMobileConso")
-    except Exception:
-        return None
+
+def run_login(acct: FreeMobileAccount, ask=input, say=print) -> int:
+    """Interactive login: enter the one-time code Free sends, once."""
+    try:
+        channel = acct.start_login()
+        if channel:
+            where = {"sms": "by SMS", "email": "by e-mail"}.get(channel, f"({channel})")
+            say(f"Free Mobile sent a security code {where}.")
+            code = ask("Security code: ")
+            acct.submit_otp(code, trust_device=True)
+        res = run_health_check(acct)
+    except FreeMobileError as exc:
+        say(f"Login failed [{exc.kind}]: {exc.message}")
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        say("\nCancelled. Run --login again within 10 minutes to enter the same code.")
+        return 1
+    say(f"Logged in: health check status = {res['status']}. Session saved to {acct.state_path}.")
+    return 0 if res["ok"] else 1
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -194,11 +215,21 @@ def main(argv: list[str] | None = None) -> None:
         help="Run the health check once, print JSON and exit (0 = ok, 1 = problem). "
         "Handy for cron or uptime monitors.",
     )
+    parser.add_argument(
+        "--login",
+        action="store_true",
+        help="Log in interactively and enter the one-time code Free sends by SMS/e-mail. "
+        "The session and trusted-device cookies are saved, so the server doesn't need a code "
+        "again until Free forgets the device.",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
 
     # stdout is the MCP channel: logs must go to stderr.
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+
+    if args.login:
+        sys.exit(run_login(account()))
 
     if args.check:
         res = run_health_check(account())

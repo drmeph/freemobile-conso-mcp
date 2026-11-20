@@ -37,6 +37,11 @@
           "description": "Seconds to cache a dashboard scrape between tool calls (default 300)",
           "isRequired": false,
           "default": "300"
+        },
+        {
+          "name": "FREEMOBILE_STATE_FILE",
+          "description": "Where the login session and trusted-device cookies are kept (default ~/.local/state/freemobile-conso-mcp/session.json)",
+          "isRequired": false
         }
       ]
     }

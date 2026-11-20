@@ -100,17 +100,63 @@ def parse_dates(value: str | None) -> list[date]:
     return out
 
 
-def billing_period(value: str | None) -> dict:
-    """Interpret the dashboard sub-title (e.g. 'Du 05/11/2026 au 04/12/2026').
+_FR_MONTHS = {
+    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6,
+    "juillet": 7, "août": 8, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11,
+    "décembre": 12, "decembre": 12,
+}
 
-    The quota resets the day after the period ends.
+
+def parse_french_date(value: str | None) -> date | None:
+    """'18 décembre 2026' (first one found) -> date(2026, 12, 18)."""
+    if not value:
+        return None
+    for d, month, y in re.findall(r"(\d{1,2})(?:er)?\s+([a-zéû]+)\s+(\d{4})", value, re.IGNORECASE):
+        mth = _FR_MONTHS.get(month.lower())
+        if mth:
+            try:
+                return date(int(y), mth, int(d))
+            except ValueError:
+                continue
+    return None
+
+
+def _nearest_year(day: int, month: int, anchor: date) -> date | None:
+    """dd/mm without a year: the date closest to `anchor`."""
+    best = None
+    for year in (anchor.year - 1, anchor.year, anchor.year + 1):
+        try:
+            cand = date(year, month, day)
+        except ValueError:
+            continue
+        if best is None or abs((cand - anchor).days) < abs((best - anchor).days):
+            best = cand
+    return best
+
+
+def billing_period(value: str | None) -> dict:
+    """Interpret the billing-period text.
+
+    Legacy dashboard: 'Suivi conso du 05/11/2026 au 04/12/2026' (the quota
+    resets the day after the period ends).
+    v2 site: 'Période du 18/11 au 18/12. Votre forfait sera remis à zéro le
+    18 décembre 2026' (no year on the period; the reset date is explicit).
     """
     dates = parse_dates(value)
+    reset = parse_french_date(value)
+    if not dates and value:
+        anchor = reset or date.today()
+        short = re.findall(r"(?<![/\d])(\d{1,2})/(\d{1,2})(?![/\d])", value)
+        parsed = [_nearest_year(int(d), int(m), anchor) for d, m in short]
+        dates = [d for d in parsed if d is not None]
+        if len(dates) >= 2 and dates[0] > dates[-1]:  # period straddles new year
+            dates[0] = dates[0].replace(year=dates[0].year - 1)
     start = dates[0] if len(dates) >= 2 else None
     end = dates[-1] if dates else None
+    renewal = reset or (end + timedelta(days=1) if end else None)
     return {
         "raw": value,
         "start": start.isoformat() if start else None,
         "end": end.isoformat() if end else None,
-        "next_renewal": (end + timedelta(days=1)).isoformat() if end else None,
+        "next_renewal": renewal.isoformat() if renewal else None,
     }

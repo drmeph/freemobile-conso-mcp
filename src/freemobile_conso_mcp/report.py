@@ -1,14 +1,16 @@
-"""Shape a FreeMobileConso result dict into agent-friendly payloads.
+"""Shape the scraped usage dict into agent-friendly payloads.
 
-Every payload keeps the raw display string from the dashboard next to the
-parsed number, so nothing is lost if a parser guesses wrong.
+The client returns the dict shape FreeMobileConso used to produce for the
+legacy dashboard, so these payloads stay stable across site versions. Every
+payload keeps the raw display string from the site next to the parsed
+number, so nothing is lost if a parser guesses wrong.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from .client import Snapshot, extract_plan_name
+from .client import Snapshot
 from .parsing import (
     billing_period,
     parse_carbon_grams,
@@ -20,7 +22,7 @@ from .parsing import (
 
 METRICS = ("data", "calls", "sms", "mms")
 
-# FreeMobileConso key -> our key
+# usage-dict key -> our key
 _LIB_KEYS = {"data": "internet", "calls": "call", "sms": "SMS", "mms": "MMS"}
 
 
@@ -53,7 +55,7 @@ def _data(d: dict) -> dict:
 
 
 def _calls(d: dict) -> dict:
-    return {
+    out = {
         "used": d.get("conso"),
         "used_seconds": parse_duration_seconds(d.get("conso")),
         "allowance": d.get("consoMax"),
@@ -64,6 +66,12 @@ def _calls(d: dict) -> dict:
         "overage": d.get("excludingPackage"),
         "overage_eur": parse_euros(d.get("excludingPackage")),
     }
+    # Abroad, the v2 site splits call time by direction rather than destination.
+    for key in ("outgoing", "incoming"):
+        if key in d:
+            out[key] = d.get(key)
+            out[f"{key}_seconds"] = parse_duration_seconds(d.get(key))
+    return out
 
 
 def _messages(d: dict, kind: str) -> dict:
@@ -146,7 +154,7 @@ def plan_info(snap: Snapshot) -> dict:
     d = snap.data
     number = d.get("number") or ""
     return {
-        "plan_name": extract_plan_name(snap.html),
+        "plan_name": d.get("plan"),
         "account_holder": d.get("nameAcount"),
         "identifier": d.get("identifier"),
         "phone_number": number,
